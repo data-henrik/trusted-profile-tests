@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tp-demo
+spec:
+  containers:
+  - name: tptest
+    image: de.icr.io/namespace/imagename:latest
+    volumeMounts:
+    - mountPath: /var/run/secrets/tokens
+      name: sa-token
+  hostNetwork: true
+  dnsPolicy: Default
+  serviceAccountName: default
+  volumes:
+  - name: sa-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          path: sa-token
+          expirationSeconds: 3600
+          audience: iam
+  - name: shared-data
+    emptyDir: {}

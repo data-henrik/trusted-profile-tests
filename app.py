@@ -14,14 +14,56 @@ from flask import (Flask, jsonify, make_response, redirect,request,
 		   render_template, url_for, Response, stream_with_context)
 import json
 from dotenv import load_dotenv
+from ibm_cloud_sdk_core.authenticators import ContainerAuthenticator
+from ibm_cloud_sdk_core import ApiException
+from ibmcloudant.cloudant_v1 import CloudantV1, Document
+from urllib.parse import urljoin
 
-codeversion='1.2.0'
+codeversion='2.2.5'
 
 # load .env if present
 load_dotenv()
 
 
 API_TOKEN=os.getenv('API_TOKEN')
+
+def readCloudantDocs(tpname):
+    # Create the authenticator.
+    try: 
+        cr_token_fname=os.getenv("TEST_TOKEN_FNAME","/var/run/secrets/tokens/sa-token")
+        crauthenticator = ContainerAuthenticator(iam_profile_name=tpname, cr_token_filename=cr_token_fname)
+        # 1. Create a client with `CLOUDANT` default service name =============
+        client = CloudantV1(authenticator=crauthenticator)
+        client.set_service_url("some-hardcoded-uri")
+        response = client.get_all_dbs().get_result()
+        return response
+    except:
+        return "error retrieving credentials"
+
+def readCloudantDocs2(tpname, endpoint):
+    try: 
+        # Decide on which file to use. Are we testing locally?
+        cr_token_fname=os.getenv("TEST_TOKEN_FNAME","/var/run/secrets/tokens/sa-token")
+        # Create the container authenticator
+        crauthenticator = ContainerAuthenticator(iam_profile_name=tpname, cr_token_filename=cr_token_fname)
+
+        # Create a Cloudant service based on the authenticator
+        client = CloudantV1(authenticator=crauthenticator)
+        # Set the endpoint URL
+        client.set_service_url(endpoint)
+        # Fetch the list of databases managed by the service
+        response = client.get_all_dbs().get_result()
+        # All done, return the result
+        return response
+    except ApiException as ae:
+        print("Method failed")
+        print(" - status code: " + str(ae.code))
+        print(" - error message: " + ae.message)
+        if ("reason" in ae.http_response.json()):
+            print(" - reason: " + ae.http_response.json()["reason"])
+    except:
+        return "error retrieving credentials"
+
 
 # see https://cloud.ibm.com/apidocs/iam-identity-token-api#gettoken-crtoken
 def retrieveIAMTokenforCR(tpname, crtoken):
@@ -33,16 +75,17 @@ def retrieveIAMTokenforCR(tpname, crtoken):
 
 
 # Read the service account token from file
-def readSAToken(filename):
-    token = None
+def readSAToken():
+    # allow to overwrite or provide the token, e.g., for local testing
+    filename=os.getenv("TEST_TOKEN_FNAME","/var/run/secrets/tokens/sa-token")
     try:
         with open(filename) as token_file:
             token = token_file.readlines()
         return token
     except:
         # error handled by caller
-        return token
-
+        return None
+    
 # fetch from API and perform necessary paging
 def handleAPIAccess(url, headers, payload, next_field, result_field):
     # fetch data from API function, passing headers and parameters
@@ -85,7 +128,7 @@ def index():
 @app.route('/api/listresources', methods=['GET'])
 def listresources():
     trustedprofile_name=request.args.get('tpname', 'TPTest')
-    crtoken=readSAToken(f'/var/run/secrets/tokens/sa-token')
+    crtoken=readSAToken()
     if crtoken is None:
         return jsonify(message="error reading service account token")
         exit
@@ -96,6 +139,33 @@ def listresources():
     else:
         return jsonify(message=authTokens)
 
+@app.route('/api/cloudantdbs', methods=['GET'])
+def listdbs():
+    trustedprofile_name=request.args.get('tpname', 'TPTest')
+    return jsonify(readCloudantDocs(trustedprofile_name))
+
+@app.route('/api/cloudantdbs2', methods=['GET'])
+def listdbs2():
+    trustedprofile_name=request.args.get('tpname', 'TPTest')
+    cloudant_name=request.args.get('cloudantname', 'Cloudant')
+    crtoken=readSAToken()
+    if crtoken is None:
+        return jsonify(message="error reading service account token")
+        exit
+    authTokens=retrieveIAMTokenforCR(trustedprofile_name, crtoken)
+    if 'access_token' in authTokens:
+        iam_token=authTokens["access_token"]
+        print("got IAM access token")
+        resource_instances=getResourceInstances(iam_token)
+        endpoint_url=None
+        for resource in resource_instances['resources']:
+            if resource['name']==cloudant_name:
+                endpoint_url=resource['extensions']['endpoints']['public']
+                print("endpoint ", endpoint_url)
+        return jsonify(readCloudantDocs2(trustedprofile_name,'https://'+endpoint_url))
+    else:
+        return jsonify(message=authTokens)
+    
 
 
 # Start the actual app

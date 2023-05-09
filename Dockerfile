@@ -46,7 +46,7 @@ EXPOSE 8080
 COPY --from=builder /venv /venv
 
 RUN apt-get update && \
-    apt-get install curl -y --no-install-recommends && \
+    apt-get install curl jq -y --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
 # copy in the rest of the app
